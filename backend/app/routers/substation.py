@@ -23,11 +23,22 @@ def list_entries(
     page: int = 1,
     size: int = 20,
 ) -> PageResult[dict]:
-    """按站区编号与状态过滤升压站列表；没有数据时返回空页，不报错。"""
+    """按站区编号与状态过滤升压站列表；没有数据时返回空页，不报错。
+
+    返回的 summary 与列表同一份数据、同一口径，页头统计直接取用。
+    """
     if size > 200:
         raise HTTPException(status_code=400, detail="每页最多 200 条，请缩小分页范围")
-    items, total = service.list_entries(keyword=keyword, status=status, page=page, size=size)
-    return PageResult(items=items, total=total, page=page, size=size)
+    items, total, summary = service.list_entries(keyword=keyword, status=status,
+                                                  page=page, size=size)
+    return PageResult(items=items, total=total, page=page, size=size, summary=summary)
+
+
+@router.get("/export")
+def export_entries() -> dict[str, Any]:
+    """导出升压站清单：返回当前过滤条件下的全量数据。"""
+    items, total, summary = service.list_entries(page=1, size=10000)
+    return {"module": "substation", "total": total, "summary": summary, "items": items}
 
 
 @router.get("/{entry_id}", response_model=dict)
@@ -41,25 +52,21 @@ def get_entry(entry_id: int) -> dict:
 
 @router.post("", response_model=ActionResult)
 def create_entry(payload: EntryPayload) -> ActionResult:
-    """登记一条升压站，缺字段时说明原因而不是静默丢弃。"""
-    entry, missing = service.create_entry(payload.values)
-    if missing:
-        return ActionResult(ok=False, message=f"缺少必填字段：{'、'.join(missing)}")
+    """登记一条升压站，缺字段或站区编号重复时说明原因而不是静默丢弃。"""
+    entry, message = service.create_entry(payload.values)
+    if entry is None:
+        return ActionResult(ok=False, message=message)
     return ActionResult(ok=True, message="升压站已登记", entry=entry)
 
 
 @router.post("/{entry_id}/actions", response_model=ActionResult)
 def run_action(entry_id: int, payload: EntryPayload) -> ActionResult:
-    """对单条升压站执行确认检修、登记负荷越限、停运升压站；不允许的动作会被拦下并说明原因。"""
+    """对单条升压站执行确认检修、登记负荷越限、停运升压站。
+
+    不允许的动作/已停运记录会被拦下并说明原因；重复执行同一结论幂等，不重复计数。
+    """
     action = str(payload.values.get("action") or "").strip()
-    entry, message = service.run_action(entry_id, action)
+    entry, message, changed = service.run_action(entry_id, action)
     if entry is None:
         return ActionResult(ok=False, message=message)
     return ActionResult(ok=True, message=message, entry=entry)
-
-
-@router.get("/export")
-def export_entries() -> dict[str, Any]:
-    """导出升压站清单：返回当前过滤条件下的全量数据。"""
-    items, total = service.list_entries(page=1, size=10000)
-    return {"module": "substation", "total": total, "items": items}

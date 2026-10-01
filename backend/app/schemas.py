@@ -13,6 +13,8 @@ class PageResult(BaseModel, Generic[T]):
     total: int
     page: int = 1
     size: int = 20
+    # 与列表同口径的统计摘要；看板、列表、页头卡片都取这一份
+    summary: dict[str, Any] | None = None
 
 
 class ActionResult(BaseModel):
