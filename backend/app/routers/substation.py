@@ -30,6 +30,19 @@ def list_entries(
     return PageResult(items=items, total=total, page=page, size=size)
 
 
+@router.get("/summary")
+def summary() -> dict[str, Any]:
+    """页头统计卡：在运数、越限站数、平均负荷率，与列表/看板同一份口径。"""
+    return service.summary()
+
+
+@router.get("/export")
+def export_entries() -> dict[str, Any]:
+    """导出升压站清单：返回当前过滤条件下的全量数据。"""
+    items, total = service.list_entries(page=1, size=10000)
+    return {"module": "substation", "total": total, "items": items}
+
+
 @router.get("/{entry_id}", response_model=dict)
 def get_entry(entry_id: int) -> dict:
     """读取单条升压站明细；不存在时给出可读的错误说明。"""
@@ -41,10 +54,10 @@ def get_entry(entry_id: int) -> dict:
 
 @router.post("", response_model=ActionResult)
 def create_entry(payload: EntryPayload) -> ActionResult:
-    """登记一条升压站，缺字段时说明原因而不是静默丢弃。"""
-    entry, missing = service.create_entry(payload.values)
-    if missing:
-        return ActionResult(ok=False, message=f"缺少必填字段：{'、'.join(missing)}")
+    """登记一条升压站；缺字段、站区编号重复、落盘失败都说明原因而不是静默丢弃。"""
+    entry, reason = service.create_entry(payload.values)
+    if entry is None:
+        return ActionResult(ok=False, message=reason)
     return ActionResult(ok=True, message="升压站已登记", entry=entry)
 
 
@@ -56,10 +69,3 @@ def run_action(entry_id: int, payload: EntryPayload) -> ActionResult:
     if entry is None:
         return ActionResult(ok=False, message=message)
     return ActionResult(ok=True, message=message, entry=entry)
-
-
-@router.get("/export")
-def export_entries() -> dict[str, Any]:
-    """导出升压站清单：返回当前过滤条件下的全量数据。"""
-    items, total = service.list_entries(page=1, size=10000)
-    return {"module": "substation", "total": total, "items": items}

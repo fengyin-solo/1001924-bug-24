@@ -43,6 +43,7 @@
               :key="action"
               class="link"
               type="button"
+              :disabled="acting"
               @click="runAction(action, row)"
             >
               {{ action }}
@@ -65,19 +66,25 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 
-import { request } from '@/api/client'
+import { fetchJson, request } from '@/api/client'
 
 type Row = Record<string, string | number | null>
+type StatCard = { label: string; value: string | number }
 
 const ENDPOINT = '/api/substation'
 const columns = ["站区编号", "主变容量", "电压等级", "所属场站", "上次检修日", "值班班组", "负荷率", "升压站状态"]
 const actions = ["确认检修", "登记负荷越限", "停运升压站"]
 const statuses = ["待检修", "运行正常", "负荷越限", "已停运"]
-const stats = [{"label": "在运升压站", "value": 0}, {"label": "负荷越限站数", "value": 0}, {"label": "平均负荷率", "value": 0}]
 
 const rows = ref<Row[]>([])
 const total = ref(0)
+const stats = ref<StatCard[]>([
+  { label: '在运升压站', value: 0 },
+  { label: '负荷越限站数', value: 0 },
+  { label: '平均负荷率', value: '—' },
+])
 const errorMessage = ref('')
+const acting = ref(false)
 const filters = ref<Record<string, string>>({})
 const filterFields = columns.slice(0, 3)
 
@@ -95,18 +102,34 @@ function openCreate() {
 }
 
 async function runAction(action: string, row: Row) {
+  if (acting.value) {
+    return
+  }
+  acting.value = true
   errorMessage.value = ''
   try {
     const response = await request(`${ENDPOINT}/${row.id}/actions`, {
       method: 'POST',
-      body: JSON.stringify({ action }),
+      body: JSON.stringify({ values: { action } }),
     })
-    if (!response.ok) {
-      throw new Error('升压站动作未生效，请稍后重试')
+    const payload = await response.json().catch(() => null)
+    if (!response.ok || !payload?.ok) {
+      throw new Error(payload?.message || `升压站动作未生效（接口返回 ${response.status}）`)
     }
-    await reload()
+    await Promise.all([reload(), loadSummary()])
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : '升压站操作失败'
+  } finally {
+    acting.value = false
+  }
+}
+
+async function loadSummary() {
+  try {
+    const payload = await fetchJson<{ stats: StatCard[] }>(`${ENDPOINT}/summary`)
+    stats.value = payload.stats ?? []
+  } catch {
+    // 统计卡刷新失败时保留旧值，错误提示交给列表的请求通道
   }
 }
 
@@ -126,5 +149,8 @@ async function reload() {
   }
 }
 
-onMounted(reload)
+onMounted(() => {
+  void reload()
+  void loadSummary()
+})
 </script>
